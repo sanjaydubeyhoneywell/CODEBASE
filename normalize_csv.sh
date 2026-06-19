@@ -1,15 +1,21 @@
 #!/bin/bash
 
-# CSV Normalization Script using awk split function
-# This script normalizes CSV files by:
-# 1. Removing extra whitespace around delimiters
-# 2. Ensuring consistent formatting
-# 3. Handling quoted fields properly
+# PIPE-Delimited File Normalization Script using awk split function
+# This script normalizes PIPE-delimited files by:
+# 1. Handling comma-delimited values within specific columns
+# 2. Removing extra whitespace around delimiters
+# 3. Normalizing comma-separated values (removing spaces, trimming)
+# 4. Ensuring consistent formatting
 
 usage() {
-    echo "Usage: $0 <input_file> [output_file]"
-    echo "  input_file:  Path to the CSV file to normalize"
-    echo "  output_file: Path to save normalized CSV (default: <input>.normalized)"
+    echo "Usage: $0 <input_file> [output_file] [columns_with_commas]"
+    echo "  input_file:             Path to the PIPE-delimited file to normalize"
+    echo "  output_file:            Path to save normalized file (default: <input>.normalized)"
+    echo "  columns_with_commas:    Comma-separated column numbers containing comma-delimited values"
+    echo "                          (default: auto-detect all columns)"
+    echo ""
+    echo "Example: $0 data.txt output.txt 3,5"
+    echo "         (Normalizes columns 3 and 5 which contain comma-delimited values)"
     exit 1
 }
 
@@ -19,7 +25,8 @@ if [ $# -lt 1 ]; then
 fi
 
 INPUT_FILE="$1"
-OUTPUT_FILE="${2:-${INPUT_FILE%.csv}.normalized.csv}"
+OUTPUT_FILE="${2:-${INPUT_FILE%.*}.normalized.${INPUT_FILE##*.}}"
+COMMA_COLUMNS="${3:-}"
 
 # Check if input file exists
 if [ ! -f "$INPUT_FILE" ]; then
@@ -27,39 +34,108 @@ if [ ! -f "$INPUT_FILE" ]; then
     exit 1
 fi
 
-# Normalize the CSV file using awk
-awk -F',' '{
-    # Split the line into fields using comma delimiter
-    n = split($0, fields, ",")
-    
-    # Process each field
-    for (i = 1; i <= n; i++) {
-        # Remove leading and trailing whitespace
-        field = fields[i]
-        gsub(/^[ \t]+|[ \t]+$/, "", field)
+# Normalize the PIPE-delimited file using awk
+if [ -z "$COMMA_COLUMNS" ]; then
+    # Auto-detect mode: normalize all columns with commas
+    awk -F'|' -v OFS='|' '{
+        # Split the line into fields using pipe delimiter
+        n = split($0, fields, "|")
         
-        # Remove quotes if the field is quoted
-        if (field ~ /^".*"$/) {
-            field = substr(field, 2, length(field) - 2)
+        # Process each field
+        for (i = 1; i <= n; i++) {
+            field = fields[i]
+            
+            # Remove leading and trailing whitespace
+            gsub(/^[ \t]+|[ \t]+$/, "", field)
+            
+            # Check if field contains commas (comma-delimited values)
+            if (field ~ /,/) {
+                # Normalize comma-delimited values
+                num_values = split(field, values, ",")
+                normalized_field = ""
+                
+                for (j = 1; j <= num_values; j++) {
+                    # Trim whitespace from each value
+                    value = values[j]
+                    gsub(/^[ \t]+|[ \t]+$/, "", value)
+                    
+                    # Build the normalized field
+                    if (normalized_field != "") {
+                        normalized_field = normalized_field ", " value
+                    } else {
+                        normalized_field = value
+                    }
+                }
+                
+                fields[i] = normalized_field
+            } else {
+                fields[i] = field
+            }
         }
         
-        # Store normalized field (with quotes if contains comma, newline, or quote)
-        if (field ~ /[,"\n]/) {
-            fields[i] = "\"" field "\""
-        } else {
-            fields[i] = field
+        # Reconstruct and output the normalized line
+        output_line = ""
+        for (i = 1; i <= n; i++) {
+            if (i > 1) output_line = output_line "|"
+            output_line = output_line fields[i]
         }
-    }
-    
-    # Reconstruct and output the normalized line
-    output_line = ""
-    for (i = 1; i <= n; i++) {
-        if (i > 1) output_line = output_line ","
-        output_line = output_line fields[i]
-    }
-    
-    print output_line
-}' "$INPUT_FILE" > "$OUTPUT_FILE"
+        
+        print output_line
+    }' "$INPUT_FILE" > "$OUTPUT_FILE"
+else
+    # Specific columns mode: normalize only specified columns with commas
+    awk -F'|' -v OFS='|' -v cols="$COMMA_COLUMNS" '{
+        # Parse the column numbers
+        split(cols, col_array, ",")
+        for (i in col_array) {
+            comma_cols[col_array[i]] = 1
+        }
+        
+        # Split the line into fields using pipe delimiter
+        n = split($0, fields, "|")
+        
+        # Process each field
+        for (i = 1; i <= n; i++) {
+            field = fields[i]
+            
+            # Remove leading and trailing whitespace
+            gsub(/^[ \t]+|[ \t]+$/, "", field)
+            
+            # Check if this column should have comma-delimited values normalized
+            if (comma_cols[i] && field ~ /,/) {
+                # Normalize comma-delimited values
+                num_values = split(field, values, ",")
+                normalized_field = ""
+                
+                for (j = 1; j <= num_values; j++) {
+                    # Trim whitespace from each value
+                    value = values[j]
+                    gsub(/^[ \t]+|[ \t]+$/, "", value)
+                    
+                    # Build the normalized field
+                    if (normalized_field != "") {
+                        normalized_field = normalized_field ", " value
+                    } else {
+                        normalized_field = value
+                    }
+                }
+                
+                fields[i] = normalized_field
+            } else {
+                fields[i] = field
+            }
+        }
+        
+        # Reconstruct and output the normalized line
+        output_line = ""
+        for (i = 1; i <= n; i++) {
+            if (i > 1) output_line = output_line "|"
+            output_line = output_line fields[i]
+        }
+        
+        print output_line
+    }' "$INPUT_FILE" > "$OUTPUT_FILE"
+fi
 
 echo "✓ Normalization complete"
 echo "  Input:  $INPUT_FILE"
